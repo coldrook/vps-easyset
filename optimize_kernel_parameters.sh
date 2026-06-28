@@ -47,23 +47,89 @@ optimize_kernel_parameters() {
     mem_mb=$((mem_kb / 1024))
     echo "    系统内存: ${mem_mb} MB"
 
-    # --- 步骤 3: 获取用户网络环境信息 ---
-    read -p "--> 是否需要手动输入网络参数? [y/N]: " manual_input
-    if [[ $manual_input =~ ^[Yy]$ ]]; then
-        read -p "    请输入您的客户端到服务器的平均网络延迟 (RTT, 单位ms, 例如 170): " rtt
-        read -p "    请输入服务器的下载带宽 (单位Mbit/s, 例如 1000): " download_bw
-        read -p "    请输入服务器的上传带宽 (单位Mbit/s, 例如 100): " upload_bw
+    detect_default_interface() {
+        ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}'
+    }
+
+    detect_link_speed_mbps() {
+        local iface="$1"
+        local speed_file="/sys/class/net/${iface}/speed"
+        local speed=""
+
+        if [ -n "$iface" ] && [ -r "$speed_file" ]; then
+            speed=$(cat "$speed_file" 2>/dev/null || true)
+            if [[ "$speed" =~ ^[0-9]+$ ]] && [ "$speed" -gt 0 ]; then
+                echo "$speed"
+                return 0
+            fi
+        fi
+
+        if command -v ethtool >/dev/null 2>&1 && [ -n "$iface" ]; then
+            speed=$(ethtool "$iface" 2>/dev/null | awk -F'[: ]+' '/Speed:/ {gsub(/Mb\/s/, "", $3); print $3; exit}')
+            if [[ "$speed" =~ ^[0-9]+$ ]] && [ "$speed" -gt 0 ]; then
+                echo "$speed"
+                return 0
+            fi
+        fi
+
+        return 1
+    }
+
+    detect_rtt_ms() {
+        local host output avg
+        for host in 1.1.1.1 8.8.8.8 223.5.5.5; do
+            if command -v ping >/dev/null 2>&1; then
+                output=$(ping -c 4 -W 2 "$host" 2>/dev/null || true)
+                avg=$(echo "$output" | awk -F'/' '/min\/avg\/max/ {print $5; exit}')
+                if is_positive_number "${avg:-}"; then
+                    awk -v avg="$avg" 'BEGIN{printf "%.0f", avg}'
+                    return 0
+                fi
+            fi
+        done
+        return 1
+    }
+
+    # --- 步骤 3: 自动检测网络环境信息，专家模式才手动输入 ---
+    echo "--> 正在自动检测网络参数..."
+    default_iface=$(detect_default_interface || true)
+    if [ -n "$default_iface" ]; then
+        echo "    默认出口网卡: ${default_iface}"
     else
-        rtt=170
-        download_bw=1000
-        upload_bw=100
-        echo "--> 使用默认值: RTT=${rtt}ms, 下载=${download_bw}Mbit/s, 上传=${upload_bw}Mbit/s"
+        echo "    [警告] 未能检测默认出口网卡，将使用保守默认值。"
     fi
 
-    # 确保输入不为空，提供一个最终的默认值
-    : "${rtt:=170}"
-    : "${download_bw:=1000}"
-    : "${upload_bw:=100}"
+    detected_speed=$(detect_link_speed_mbps "${default_iface:-}" || true)
+    if is_positive_number "${detected_speed:-}"; then
+        download_bw="$detected_speed"
+        upload_bw="$detected_speed"
+        echo "    链路速率: ${detected_speed} Mbit/s"
+    else
+        download_bw=1000
+        upload_bw=1000
+        echo "    [警告] 未能检测链路速率，使用保守默认值: 下载=${download_bw}Mbit/s, 上传=${upload_bw}Mbit/s"
+    fi
+
+    detected_rtt=$(detect_rtt_ms || true)
+    if is_positive_number "${detected_rtt:-}"; then
+        rtt="$detected_rtt"
+        echo "    外部 RTT: ${rtt} ms"
+    else
+        rtt=170
+        echo "    [警告] 未能检测 RTT，使用默认值: ${rtt} ms"
+    fi
+
+    echo "--> 自动检测结果: RTT=${rtt}ms, 下载=${download_bw}Mbit/s, 上传=${upload_bw}Mbit/s"
+    read -p "--> 是否进入专家模式手动修改网络参数? [y/N]: " manual_input
+    if [[ $manual_input =~ ^[Yy]$ ]]; then
+        read -p "    请输入客户端到服务器的平均网络延迟 (RTT, 单位ms, 当前 ${rtt}): " input_rtt
+        read -p "    请输入服务器下载带宽 (单位Mbit/s, 当前 ${download_bw}): " input_download_bw
+        read -p "    请输入服务器上传带宽 (单位Mbit/s, 当前 ${upload_bw}): " input_upload_bw
+        rtt=${input_rtt:-$rtt}
+        download_bw=${input_download_bw:-$download_bw}
+        upload_bw=${input_upload_bw:-$upload_bw}
+        echo "--> 专家模式参数: RTT=${rtt}ms, 下载=${download_bw}Mbit/s, 上传=${upload_bw}Mbit/s"
+    fi
 
     if ! is_positive_number "$rtt" || ! is_positive_number "$download_bw" || ! is_positive_number "$upload_bw"; then
         echo "====== [错误] RTT、下载带宽、上传带宽必须是大于 0 的数字。 ======"
