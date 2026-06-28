@@ -83,7 +83,7 @@ curl -L https://raw.githubusercontent.com/spiritLHLS/one-click-installation-scri
    - 安装新内核后通常需要重启，再用 `uname -r` 确认是否进入 XanMod 内核
 
 ```sh
-bash <(curl -sL https://raw.githubusercontent.com/coldrook/vps-easyset/refs/heads/main/tcpx.sh)
+wget -O tcpx.sh "https://raw.githubusercontent.com/coldrook/vps-easyset/refs/heads/main/tcpx.sh" && chmod +x tcpx.sh && ./tcpx.sh
 ```
 
 ## 简易的Docker Compose安装脚本，对全局日志进行了限制
