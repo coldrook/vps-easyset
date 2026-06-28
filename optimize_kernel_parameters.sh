@@ -72,7 +72,74 @@ optimize_kernel_parameters() {
             fi
         fi
 
+        if command -v networkctl >/dev/null 2>&1 && [ -n "$iface" ]; then
+            speed=$(networkctl status "$iface" 2>/dev/null | awk '/Bit Rate:/ {for (i=1; i<=NF; i++) if ($(i+1) ~ /^Gbit\/s$/) {printf "%.0f", $i * 1000; exit} else if ($(i+1) ~ /^Mbit\/s$/) {printf "%.0f", $i; exit}}')
+            if [[ "$speed" =~ ^[0-9]+$ ]] && [ "$speed" -gt 0 ]; then
+                echo "$speed"
+                return 0
+            fi
+        fi
+
+        if command -v nmcli >/dev/null 2>&1 && [ -n "$iface" ]; then
+            speed=$(nmcli -t -f GENERAL.SPEED device show "$iface" 2>/dev/null | awk -F: '{gsub(/ Mb\/s/, "", $2); print $2; exit}')
+            if [[ "$speed" =~ ^[0-9]+$ ]] && [ "$speed" -gt 0 ]; then
+                echo "$speed"
+                return 0
+            fi
+        fi
+
         return 1
+    }
+
+    describe_interface_type() {
+        local iface="$1"
+        local driver=""
+        local type=""
+
+        if [ -z "$iface" ]; then
+            echo "unknown"
+            return 0
+        fi
+
+        if [ -L "/sys/class/net/${iface}/device/driver" ]; then
+            driver=$(basename "$(readlink -f "/sys/class/net/${iface}/device/driver")" 2>/dev/null || true)
+        fi
+        type=$(cat "/sys/class/net/${iface}/type" 2>/dev/null || true)
+
+        if [ -n "$driver" ]; then
+            echo "driver=${driver}"
+        elif [ "$type" = "1" ]; then
+            echo "ethernet/virtual"
+        else
+            echo "type=${type:-unknown}"
+        fi
+    }
+
+    prompt_bandwidth_if_unknown() {
+        local current_download="$1"
+        local current_upload="$2"
+        local input_download=""
+        local input_upload=""
+
+        echo "    [提示] VPS、云主机、容器或 virtio 网卡常常不暴露真实链路速率。" >&2
+        echo "    [提示] 如果知道套餐带宽，建议直接输入真实外网带宽，优化会更准确。" >&2
+        printf "    是否手动输入服务器外网下载/上传带宽? [y/N]: " >&2
+        read -r input_bandwidth
+        if [[ $input_bandwidth =~ ^[Yy]$ ]]; then
+            printf "    请输入服务器下载带宽 (Mbit/s, 当前 %s): " "$current_download" >&2
+            read -r input_download
+            printf "    请输入服务器上传带宽 (Mbit/s, 当前 %s): " "$current_upload" >&2
+            read -r input_upload
+            if [ -n "$input_download" ]; then
+                current_download="$input_download"
+            fi
+            if [ -n "$input_upload" ]; then
+                current_upload="$input_upload"
+            fi
+        fi
+
+        printf '%s %s
+' "$current_download" "$current_upload"
     }
 
     detect_rtt_ms() {
@@ -107,7 +174,13 @@ optimize_kernel_parameters() {
     else
         download_bw=1000
         upload_bw=1000
-        echo "    [警告] 未能检测链路速率，使用保守默认值: 下载=${download_bw}Mbit/s, 上传=${upload_bw}Mbit/s"
+        if [ -n "${default_iface:-}" ]; then
+            echo "    [警告] 未能检测 ${default_iface} 的链路速率 ($(describe_interface_type "$default_iface"))。"
+        else
+            echo "    [警告] 未能检测链路速率。"
+        fi
+        read -r download_bw upload_bw < <(prompt_bandwidth_if_unknown "$download_bw" "$upload_bw")
+        echo "    带宽参数: 下载=${download_bw}Mbit/s, 上传=${upload_bw}Mbit/s"
     fi
 
     detected_rtt=$(detect_rtt_ms || true)
