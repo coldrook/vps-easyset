@@ -75,14 +75,15 @@ bash <(curl -sL https://raw.githubusercontent.com/coldrook/vps-easyset/refs/head
 curl -L https://raw.githubusercontent.com/spiritLHLS/one-click-installation-script/main/repair_scripts/resize_journal.sh -o resize_journal.sh && chmod +x resize_journal.sh && bash resize_journal.sh
 ```
 
-## xanmod 内核
+## xanmod 内核与网络参数优化
 
-   - https://github.com/ylx2016/kernel/
-   - xanmod官方MAIN版本默认为BBR3(替换了原来的BBR)，仅支持Debian/Ubuntu    
-   - 查询当前bbr  cat /sys/module/tcp_bbr/version 或者 modinfo tcp_bbr
+   - 使用本仓库 `tcpx.sh`，先检测系统环境和版本，再调用 `manage_xanmod_kernel.sh` 安装 XanMod 内核，最后调用 `optimize_kernel_parameters.sh` 优化内核参数
+   - XanMod MAIN 版本默认为 BBR3（替换了原来的 BBR），仅支持 Debian/Ubuntu x86_64
+   - 查询当前 BBR：`cat /sys/module/tcp_bbr/version` 或 `modinfo tcp_bbr`
+   - 安装新内核后通常需要重启，再用 `uname -r` 确认是否进入 XanMod 内核
 
 ```sh
-wget -O tcpx.sh "https://github.com/ylx2016/Linux-NetSpeed/raw/master/tcpx.sh" && chmod +x tcpx.sh && ./tcpx.sh
+bash <(curl -sL https://raw.githubusercontent.com/coldrook/vps-easyset/refs/heads/main/tcpx.sh)
 ```
 
 ## 简易的Docker Compose安装脚本，对全局日志进行了限制
